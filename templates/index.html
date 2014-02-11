@@ -1,0 +1,384 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"
+        "http://www.w3.org/TR/html4/loose.dtd">
+<html>
+<head>
+    <title></title>
+    <link rel="stylesheet" href="//netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css">
+    <style type="text/css">
+        .cspinner {
+            margin-top: 100px;
+            margin-left: 42%;
+        }
+
+        .list-btn {
+            width: 100%;
+            font-size: 10px;
+        }
+
+        .category-column {
+            height: 268px;
+            overflow: auto;
+            margin-bottom: 20px;
+
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <!--<pre data-bind="text: ko.toJSON($root.currentCrimes(), null, 2)"></pre>-->
+    <h2>Chicago Crime Map</h2>
+    <div id="map-container">
+        <div id="map-canvas" style="width:100%; height: 450px;"></div>
+        <div data-bind="visible: loaded">
+        <h3>Display Settings</h3>
+        <div class="row">
+            <div class="col-md-4">
+                <h4>Type: <span data-bind="text: description()"></span></h4>
+                <div class="category-column">
+                <!-- ko foreach: sortedDescriptions -->
+                <div data-bind="text: name + ': ' + count(), click: $root.setSetting.bind($root, $data, 'descriptions', 'description'), attr: { class: css_class }"></div>
+                <!-- /ko -->
+                </div>
+            </div>
+            <div class="col-md-4">
+                <h4>Location Type: <span data-bind="text: location()"></span></h4>
+                <div class="category-column">
+                <!-- ko foreach: sortedLocations -->
+                <div data-bind="text: name + ': ' + count(), click: $root.setSetting.bind($root, $data, 'locations', 'location'), attr: { class: css_class }"></div>
+                <!-- /ko -->
+                </div>
+            </div>
+            <div class="col-md-4">
+                <h4>Districts: <span data-bind="text: district()"></span></h4>
+                <div class="category-column">
+                <!-- ko foreach: sortedDistricts -->
+                <div data-bind="text: name + ': ' + count(), click: $root.setSetting.bind($root, $data, 'districts', 'district'), attr: { class: css_class }"></div>
+                <!-- /ko -->
+                </div>
+            </div>
+
+        </div>
+        </div>
+    </div>
+
+
+
+</div>
+<script src="http://code.jquery.com/jquery-1.10.1.min.js"></script>
+<script src="http://code.jquery.com/jquery-migrate-1.2.1.min.js"></script>
+<script type='text/javascript' src="/static/js/knockout-2.3.0.js"></script>
+<script type='text/javascript' src="/static/js/ko_mapping.js"></script>
+<script type="text/javascript" src="/static/js/underscore.js"></script>
+<script type="text/javascript" src="/static/js/spin.js"></script>
+<script type="text/javascript" src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDyYwY9iZG8Jr2uv_6aRscKqybfYwN9S2E&sensor=false"></script>
+<script>
+
+    function Crime(arrest, district, domestic, latitude, longitude, description, date, location_description) {
+        var self = this;
+        self.arrest = arrest;
+        self.district = district;
+        self.domestic = domestic;
+        self.latitude = latitude;
+        self.longitude = longitude;
+        self.description = description;
+        self.date = date;
+        self.location_description = location_description;
+    }
+
+    function CrimeDescriptor(name) {
+        var self = this;
+        self.name = name;
+        self.count = ko.observable(1);
+        self.css_class = ko.observable('btn btn-default list-btn');
+    }
+
+    function Map() {
+        var self = this;
+        var map;
+        var btnClass = 'btn btn-info list-btn';
+        var activeBtnClass = 'btn btn-warning list-btn';
+
+        // has the data loaded
+        self.loaded = ko.observable(false);
+
+        // all crime data
+        self.data = ko.observableArray();
+
+        // display categories
+        self.districts = ko.observableArray();
+        self.descriptions = ko.observableArray();
+        self.locations = ko.observableArray();
+
+        // sorting criteria
+        self.sortByCount = function(left, right) {
+            return left.count() == right.count() ? 0 : (left.count() < right.count() ? 1 : -1)
+        };
+        // sorted display categories
+
+        self.sortedDistricts = ko.computed(function() {
+            self.temp1 = ko.observableArray();
+            ko.utils.arrayForEach(self.districts(), function(category) {
+                self.temp1.push(category);
+            });
+            return self.temp1.sort(self.sortByCount)
+        });
+        self.sortedDescriptions = ko.computed(function() {
+            self.temp2 = ko.observableArray();
+            ko.utils.arrayForEach(self.descriptions(), function(category) {
+                self.temp2.push(category);
+            });
+            return self.temp2.sort(self.sortByCount)
+        });
+        self.sortedLocations = ko.computed(function() {
+            self.temp3 = ko.observableArray();
+            ko.utils.arrayForEach(self.locations(), function(category) {
+                self.temp3.push(category);
+            });
+            return self.temp3.sort(self.sortByCount)
+        });
+
+        // display settings
+        self.description = ko.observable('All');
+        self.location = ko.observable('All');
+        self.district = ko.observable('All');
+
+
+        self.currentCrimes = ko.computed(function () {
+            self.crimes = ko.observableArray();
+            ko.utils.arrayForEach(self.data(), function(event) {
+                if ((event.district === self.district() || self.district() === 'All') &&
+                    (event.location_description === self.location() || self.location() === 'All') &&
+                    (event.description === self.description() || self.description() === 'All')) {
+
+                    self.crimes.push(event);
+                }
+            });
+            return self.crimes();
+        });
+
+        self.addMarker = function(event) {
+            var imgString = self.getCrimeImage(event);
+            var myLatLng = new google.maps.LatLng(event.latitude, event.longitude);
+            var marker = new google.maps.Marker({
+                position: myLatLng,
+                map: map,
+                icon: '/static/img/' + imgString + '.png',
+                title: event.description
+            });
+            self.markersArray.push(marker);
+
+            google.maps.event.addListener(marker, 'click', function() {
+                var match;
+                match = ko.utils.arrayFirst(self.descriptions(), function(item) {
+                    return event.description === item.name;
+                });
+                self.setSetting(match, 'descriptions', 'description');
+            });
+        };
+
+        self.markersArray = [];
+
+        self.clearOverlays = function() {
+            for (var i = 0; i < self.markersArray.length; i++ ) {
+                self.markersArray[i].setMap(null);
+            }
+            self.markersArray.length = 0;
+        };
+
+        self.updateMap = ko.computed(function () {
+            // clear all markers off map
+            if (self.loaded()) {
+                self.clearOverlays();
+                ko.utils.arrayForEach(self.currentCrimes(), function(event) {
+                    self.addMarker(event);
+                });
+            }
+            return null;
+        });
+
+        self.setSetting = function(specificSetting, area, areaCurrent) {
+            ko.utils.arrayForEach(self[area](), function(category) {
+                category.css_class(btnClass);
+            });
+            self[areaCurrent](specificSetting.name);
+            specificSetting.css_class(activeBtnClass);
+        };
+
+        self.addCategory = function(area, event, eventArea) {
+            var match = ko.utils.arrayFirst(self[area](), function(item) {
+                return event[eventArea] === item.name;
+            });
+            if (!match) {
+                self[area].push(new CrimeDescriptor(event[eventArea]));
+            }
+            else {
+                match.count(match.count() + 1)
+            }
+        };
+
+        self.addAllCrime = function(area, count) {
+            var allCrime = new CrimeDescriptor('All');
+            allCrime.count(count);
+            self[area].push(allCrime);
+            self.setSetting(allCrime, area, area.slice(0, area.length-1));
+        };
+
+        self.getCrimeImage = function(event) {
+            var type = event.description;
+            var gunRe = /GUN/;
+            var drugRe = /POSS/;
+            var theftRe = /THEFT|SNATCH|POCKET/;
+            var fireRe = /FIRE/;
+            var bombRe = /BOMB/;
+            var domesticRe = /DOMESTIC|STRONGARM/;
+            var robberyRe = /ENTRY|HOME/;
+            var carRe = /VEHICLE|AUTOMOBILE/;
+            var buildingRe = /BUILDING/;
+            var moneyRe = /\$500/;
+            var propertyRe = /PROPERTY/;
+            var landRe = /LAND/;
+
+            if (gunRe.test(type)) {
+                return 'shooting'
+            }
+            else if (drugRe.test(type)) {
+                return 'pirates'
+            }
+            else if (moneyRe.test(type)) {
+                return 'bank'
+            }
+            else if (buildingRe.test(type)) {
+                return 'office-building'
+            }
+            else if (propertyRe.test(type)) {
+                return 'condominium'
+            }
+            else if (carRe.test(type)) {
+                return 'car'
+            }
+            else if (robberyRe.test(type)) {
+                return 'robbery'
+            }
+            else if (domesticRe.test(type)) {
+                return 'torture'
+            }
+            else if (theftRe.test(type)) {
+                return 'theft'
+            }
+            else if (landRe.test(type)) {
+                return 'levelcrossing'
+            }
+            else if (fireRe.test(type)) {
+                return 'fire'
+            }
+            else if (bombRe.test(type)) {
+                return 'bomb'
+            }
+            else {
+                return 'police'
+            }
+        };
+
+        function getData() {
+            var target = document.getElementById('map-container');
+            var spinner = new Spinner(opts).spin(target);
+            var match;
+            var max_length = 40;
+            // request data set
+            $.ajax({
+                type: "GET",
+                url: "http://data.cityofchicago.org/resource/qnmj-8ku6.json"
+            }).success(function (response) {
+                        var size = response.length;
+                        _.each(response, function (event, index) {
+                            self.data.push(new Crime(event.arrest, event.district, event.domestic,
+                                    event.latitude, event.longitude, event.description,
+                                    event.date, event.location_description));
+
+                            // districts
+                            match = ko.utils.arrayFirst(self.districts(), function(item) {
+                                return event.district === item.name;
+                            });
+                            if (!match) {
+                                self.districts.push(new CrimeDescriptor(event.district));
+                            }
+                            else {
+                                match.count(match.count() + 1)
+                            }
+
+                            // descriptions
+                            match = ko.utils.arrayFirst(self.descriptions(), function(item) {
+                                return event.description === item.name;
+                            });
+                            if (!match) {
+                                self.descriptions.push(new CrimeDescriptor(event.description.slice(0,max_length)));
+                            }
+                            else {
+                                match.count(match.count() + 1)
+                            }
+
+                            // locations
+                            match = ko.utils.arrayFirst(self.locations(), function(item) {
+                                return event.location_description === item.name;
+                            });
+                            if (!match) {
+                                self.locations.push(new CrimeDescriptor(event.location_description));
+                            }
+                            else {
+                                match.count(match.count() + 1)
+                            }
+
+                        });
+
+                        spinner.stop();
+                        self.loaded(true);
+
+                        self.addAllCrime('locations', size);
+                        self.addAllCrime('descriptions', size);
+                        self.addAllCrime('districts', size);
+
+                        // render google map on chicago
+                        var mapOptions = {
+                            center: new google.maps.LatLng(41.878114, -87.629798),
+                            zoom: 10
+                        };
+                        var mapCanvas = document.getElementById("map-canvas");
+                        map = new google.maps.Map(mapCanvas, mapOptions);
+
+                        ko.utils.arrayForEach(self.currentCrimes(), function(event) {
+                            self.addMarker(event);
+                        });
+                    });
+        }
+
+        var opts = {
+            lines: 13, // The number of lines to draw
+            length: 6, // The length of each line
+            width: 4, // The line thickness
+            radius: 11, // The radius of the inner circle
+            corners: 0.8, // Corner roundness (0..1)
+            rotate: 36, // The rotation offset
+            direction: 1, // 1: clockwise, -1: counterclockwise
+            color: 'black', // #rgb or #rrggbb
+            speed: 1.2, // Rounds per second
+            trail: 58, // Afterglow percentage
+            shadow: false, // Whether to render a shadow
+            hwaccel: false, // Whether to use hardware acceleration
+            className: 'cspinner', // The CSS class to assign to the spinner
+            zIndex: 2e9, // The z-index (defaults to 2000000000)
+            top: '100px', // Top position relative to parent in px
+            left: '80px' // Left position relative to parent in px
+        };
+
+        getData();
+
+
+    }
+
+    ko.applyBindings(new Map());
+
+</script>
+
+</body>
+</html>
